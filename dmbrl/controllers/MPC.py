@@ -4,7 +4,9 @@ from __future__ import absolute_import
 
 import os
 
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
+
 import numpy as np
 from scipy.io import savemat
 
@@ -195,6 +197,7 @@ class MPC(Controller):
         self.model.train(train_in, train_targs, **self.model_train_cfg)
 
         if self.should_calibrate:
+            print("Calibrating model...")
             self.model.calibrate(cal_in, cal_targs, **self.model_train_cfg)
 
         if logdir:
