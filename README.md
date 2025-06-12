@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Calibrated Model-Based Deep Reinforcement Learning
 
 
@@ -30,3 +31,6 @@ python scripts/mbexp.py
 
 Example command: `python scripts/mbexp.py -env cartpole -ca model-type PE -ca prop-type DS -calibrate`
 
+=======
+# MultiCalibratedMBRL
+>>>>>>> fd158f68fe321132cc5553c170bba76926ae7f26
