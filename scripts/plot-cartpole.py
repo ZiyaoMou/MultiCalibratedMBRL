@@ -29,7 +29,7 @@ def find_log_files(experiment_base):
     log_files = []
     
     # Try numbered directories from 0 to 9
-    for i in range(4):  # 0 through 9
+    for i in range(10):  # 0 through 9
         numbered_dir = f"{experiment_base}-{i}"
         dir_path = os.path.join(base_dir, numbered_dir)
         log_path = find_latest_log_in_dir(dir_path)
@@ -41,8 +41,8 @@ def find_log_files(experiment_base):
     return log_files
 
 log_dirs = {
-    "PE-DS-calibrate": find_log_files("1_cartpole_calibrated"),
-    "PE-DS-no-calibrate": find_log_files("1_cartpole_uncalibrated"),
+    "PE-DS-calibrate": find_log_files("cartpole_calibrated"),
+    "PE-DS-no-calibrate": find_log_files("cartpole_uncalibrated"),
 }
 
 plt.figure(figsize=(8, 5))
