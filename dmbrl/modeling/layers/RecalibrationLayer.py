@@ -1,4 +1,5 @@
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 class RecalibrationLayer(tf.keras.layers.Layer):
     def __init__(self, out_dim):
@@ -24,6 +25,7 @@ class RecalibrationLayer(tf.keras.layers.Layer):
         return self.out_dim
 
     def call(self, x, activation=True):
+        x = tf.cast(x, tf.float32)
         out = x * self.A + self.B
         if not activation:
             return out
