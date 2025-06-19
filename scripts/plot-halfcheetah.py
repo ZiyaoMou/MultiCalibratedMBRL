@@ -29,20 +29,20 @@ def find_log_files(experiment_base):
     log_files = []
     
     # Try numbered directories from 0 to 9
-    for i in range(10):  # 0 through 9
+    for i in range(0,1):  # 0 through 9
         numbered_dir = f"{experiment_base}-{i}"
         dir_path = os.path.join(base_dir, numbered_dir)
         log_path = find_latest_log_in_dir(dir_path)
         if log_path:
             log_files.append(log_path)
-    
+        print(dir_path)
     if not log_files:
         raise FileNotFoundError(f"No logs.mat found in {experiment_base}-0 through {experiment_base}-9")
     return log_files
 
 log_dirs = {
-    "PE-DS-calibrate": find_log_files("1_cartpole_calibrated"),
-    "PE-DS-no-calibrate": find_log_files("1_cartpole_uncalibrated"),
+    "PE-DS-calibrate": find_log_files("halfcheetah_calibrated"),
+    "PE-DS-no-calibrate": find_log_files("halfcheetah_uncalibrated"),
 }
 
 plt.figure(figsize=(8, 5))
@@ -56,7 +56,7 @@ for label, paths in log_dirs.items():
 
         data = loadmat(path)
         returns = data["returns"]
-        returns = returns[:, :15]
+        returns = returns[:, :73]
         
         # Calculate maximum reward up to each point
         max_returns = np.maximum.accumulate(returns[0])
@@ -67,17 +67,17 @@ for label, paths in log_dirs.items():
         stacked_max_returns = np.vstack(all_max_returns)
         mean = np.mean(stacked_max_returns, axis=0)
         ste = np.std(stacked_max_returns, axis=0) / np.sqrt(stacked_max_returns.shape[0])
-        x = np.arange(1, len(mean) + 1) * 200
+        x = np.arange(1, len(mean) + 1) * 1000
         
         plt.plot(x, mean, label=label)
         plt.fill_between(x, mean - ste, mean + ste, alpha=0.2)
 
-plt.title("cartpole")
+plt.title("halfcheetah")
 plt.xlabel("Number of Timesteps")
 plt.ylabel("Maximum Reward")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
 
-plt.savefig("images/1-cartpole_comparison-max.png")
+plt.savefig("images/halfcheetah_comparison-max.png")
 plt.show()
