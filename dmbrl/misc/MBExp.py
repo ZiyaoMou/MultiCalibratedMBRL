@@ -101,7 +101,7 @@ class MBExperiment:
         # Training loop
         for i in range(self.ntrain_iters):
             print("####################################################################")
-            print("Starting training iteration %d." % (i + 1))
+            print("Starting training iteration %d." % (i + 1), flush=True)
 
             iter_dir = os.path.join(self.logdir, "train_iter%d" % (i + 1))
             os.makedirs(iter_dir, exist_ok=True)

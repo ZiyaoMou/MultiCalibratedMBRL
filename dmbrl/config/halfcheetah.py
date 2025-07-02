@@ -7,24 +7,79 @@ import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 from dotmap import DotMap
 import gym
-
+from typing import Optional
 from dmbrl.misc.DotmapUtils import get_required_argument
 from dmbrl.modeling.layers import FC
 import dmbrl.env
 
+class DomainVectorWrapper(gym.Wrapper):
+    def __init__(self, env,
+                 fw_range=(0.8, 1.2),
+                 cc_range=(0.05, 0.3), 
+                 rn_range=(0.05, 0.3),
+                 emb_dim: Optional[int] = None):
+        super().__init__(env)
+        self.fw_range, self.cc_range, self.rn_range = fw_range, cc_range, rn_range
+        self.emb_dim = emb_dim 
+        
+        # Only randomize domain if emb_dim is provided
+        if emb_dim is not None:
+            self._randomize_domain()
+        else:
+            # For backward compatibility, don't create domain vector
+            self.domain_vector = None
+
+    def _randomize_domain(self):
+        fw = np.random.uniform(*self.fw_range)
+        cc = np.random.uniform(*self.cc_range)
+        rn = np.random.uniform(*self.rn_range)
+
+        for attr, val in [("forward_reward_weight", fw),
+                          ("ctrl_cost_weight",      cc),
+                          ("reset_noise_scale",     rn)]:
+            setattr(self.env, attr, val)
+
+        # Create domain vector with correct dimension
+        if self.emb_dim is not None:
+            self.domain_vector = np.array([fw, cc, rn], dtype=np.float32)
+            if self.domain_vector.size < self.emb_dim:
+                pad = np.zeros(self.emb_dim - 3, dtype=np.float32)
+                self.domain_vector = np.concatenate([self.domain_vector, pad])
+            elif self.domain_vector.size > self.emb_dim:
+                self.domain_vector = self.domain_vector[:self.emb_dim]
+        else:
+            self.domain_vector = np.array([fw, cc, rn], dtype=np.float32)
+
+    def get_domain_vector(self) -> np.ndarray:
+        return self.domain_vector
+
+    def reset(self, **kwargs):
+        if self.emb_dim is not None:
+            self._randomize_domain()
+        return self.env.reset(**kwargs)
 
 class HalfCheetahConfigModule:
-    ENV_NAME = "MBRLHalfCheetah-v0"
+    ENV_NAME = "MBRLHalfCheetah-v4"
     TASK_HORIZON = 1000
     NTRAIN_ITERS = 300
     NROLLOUTS_PER_ITER = 1
-    PLAN_HOR = 30
-    MODEL_IN, MODEL_OUT = 24, 18
     GP_NINDUCING_POINTS = 300
 
-    def __init__(self):
-        self.ENV = gym.make(self.ENV_NAME)
+    def __init__(self, emb_dim=None):
+        self.emb_dim = emb_dim
+        obs_dim = 18  # Updated to match actual HalfCheetah environment
+        act_dim = 6
+        domain_dim = emb_dim if emb_dim is not None else 0
+        self.MODEL_IN = obs_dim + act_dim + domain_dim
+        self.MODEL_OUT = obs_dim
+        self.PLAN_HOR = 30
+        base_env = gym.make(self.ENV_NAME)
         cfg = tf.ConfigProto()
+        # Create DomainVectorWrapper with emb_dim parameter
+        if emb_dim is not None:
+            self.ENV = DomainVectorWrapper(base_env, emb_dim=emb_dim)
+        else:
+            self.ENV = base_env
         cfg.gpu_options.allow_growth = True
         self.SESS = tf.Session(config=cfg)
         self.NN_TRAIN_CFG = {"epochs": 5}
@@ -43,19 +98,27 @@ class HalfCheetahConfigModule:
     @staticmethod
     def obs_preproc(obs):
         if isinstance(obs, np.ndarray):
+            if obs.ndim == 1:
+                obs = obs.reshape(1, -1)
+            # Use original logic for backward compatibility
             return np.concatenate([obs[:, 1:2], np.sin(obs[:, 2:3]), np.cos(obs[:, 2:3]), obs[:, 3:]], axis=1)
         else:
+            if len(obs.get_shape()) == 1:
+                obs = tf.expand_dims(obs, 0)
+            # Use original logic for backward compatibility
             return tf.concat([obs[:, 1:2], tf.sin(obs[:, 2:3]), tf.cos(obs[:, 2:3]), obs[:, 3:]], axis=1)
 
     @staticmethod
     def obs_postproc(obs, pred):
+        # Use original logic for backward compatibility
         if isinstance(obs, np.ndarray):
             return np.concatenate([pred[:, :1], obs[:, 1:] + pred[:, 1:]], axis=1)
         else:
             return tf.concat([pred[:, :1], obs[:, 1:] + pred[:, 1:]], axis=1)
-
+    
     @staticmethod
     def targ_proc(obs, next_obs):
+        # Use original logic for backward compatibility
         return np.concatenate([next_obs[:, :1], next_obs[:, 1:] - obs[:, 1:]], axis=1)
 
     @staticmethod
@@ -73,7 +136,9 @@ class HalfCheetahConfigModule:
         model = get_required_argument(model_init_cfg, "model_class", "Must provide model class")(DotMap(
             name="model", num_networks=get_required_argument(model_init_cfg, "num_nets", "Must provide ensemble size"),
             sess=self.SESS, load_model=model_init_cfg.get("load_model", False),
-            model_dir=model_init_cfg.get("model_dir", None)
+            model_dir=model_init_cfg.get("model_dir", None),
+            emb_dim=model_init_cfg.get("emb_dim", None),
+            cal_hidden=model_init_cfg.get("cal_hidden", 16)
         ))
         if not model_init_cfg.get("load_model", False):
             model.add(FC(200, input_dim=self.MODEL_IN, activation="swish", weight_decay=0.000025))

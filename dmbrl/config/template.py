@@ -19,7 +19,8 @@ class EnvConfigModule:
     NROLLOUTS_PER_ITER = None
     PLAN_HOR           = None
 
-    def __init__(self):
+    def __init__(self, emb_dim=None):
+        self.emb_dim = emb_dim
         self.ENV = gym.make(self.ENV_NAME)
         cfg = tf.ConfigProto()
         cfg.gpu_options.allow_growth = True
@@ -80,7 +81,9 @@ class EnvConfigModule:
     def nn_constructor(self, model_init_cfg):
         model = get_required_argument(model_init_cfg, "model_class", "Must provide model class")(DotMap(
             name="model", num_networks=get_required_argument(model_init_cfg, "num_nets", "Must provide ensemble size"),
-            sess=self.SESS
+            sess=self.SESS,
+            emb_dim=model_init_cfg.get("emb_dim", None),
+            cal_hidden=model_init_cfg.get("cal_hidden", 16)
         ))
         # Construct model below. For example:
         # model.add(FC(*args))

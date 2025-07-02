@@ -15,12 +15,13 @@ from dmbrl.misc.DotmapUtils import get_required_argument
 from dmbrl.misc.optimizers import RandomOptimizer, CEMOptimizer
 
 from sklearn.model_selection import train_test_split
+from typing import Optional
 
 
 class MPC(Controller):
     optimizers = {"CEM": CEMOptimizer, "Random": RandomOptimizer}
 
-    def __init__(self, params, calibrate=False):
+    def __init__(self, params, calibrate=False, emb_dim=None, cal_hidden=16):
         """Creates class instance.
 
         Arguments:
@@ -82,7 +83,46 @@ class MPC(Controller):
                         Warning: Can be very memory-intensive
         """
         super().__init__(params)
-        self.dO, self.dU = params.env.observation_space.shape[0], params.env.action_space.shape[0]
+        
+        # Store calibration parameters
+        self.emb_dim = emb_dim
+        self.cal_hidden = cal_hidden
+        self.should_calibrate = calibrate
+        
+        # Get domain vector from environment if available
+        self.domain_vector = None
+        if hasattr(params.env, 'get_domain_vector'):
+            self.domain_vector = params.env.get_domain_vector()
+        elif hasattr(params.env, 'domain_vector'):
+            self.domain_vector = params.env.domain_vector
+        
+        # Calculate dimensions - use actual observation dimension from wrapped environment
+        # Get a sample observation to determine the actual dimension
+        sample_obs = params.env.reset()
+        if isinstance(sample_obs, tuple):
+            sample_obs = sample_obs[0]  # Gym 0.26+: (obs, info)
+        
+        print(f"DEBUG: Base observation dimension: {len(sample_obs)}")
+        print(f"DEBUG: Domain vector: {self.domain_vector}")
+        print(f"DEBUG: Domain vector dimension: {len(self.domain_vector) if self.domain_vector is not None else 0}")
+        
+        # Only concatenate domain vector if it exists and has non-zero length
+        if self.domain_vector is not None and len(self.domain_vector) > 0:
+            sample_obs = np.concatenate([sample_obs, self.domain_vector], axis=-1)
+        
+        self.dO = len(sample_obs)  # Actual observation dimension including domain vector
+        self.dU = params.env.action_space.shape[0]
+        
+        print(f"DEBUG: Final observation dimension: {self.dO}")
+        
+        # Assertions to ensure correct dimensions
+        base_obs_dim = self.dO - len(self.domain_vector) if self.domain_vector is not None else self.dO
+        expected_dim = base_obs_dim + len(self.domain_vector) if self.domain_vector is not None else base_obs_dim
+        assert self.dO == expected_dim, f"Expected observation dimension {expected_dim} ({base_obs_dim}+{len(self.domain_vector) if self.domain_vector is not None else 0}), got {self.dO}"
+        if self.domain_vector is not None:
+            assert len(self.domain_vector) > 0, "Domain vector should not be empty"
+        print(f"MPC initialized with dO={self.dO}, dU={self.dU}, domain_dim={len(self.domain_vector) if self.domain_vector is not None else 0}")
+
         self.ac_ub, self.ac_lb = params.env.action_space.high, params.env.action_space.low
         self.ac_ub = np.minimum(self.ac_ub, params.get("ac_ub", self.ac_ub))
         self.ac_lb = np.maximum(self.ac_lb, params.get("ac_lb", self.ac_lb))
@@ -110,8 +150,6 @@ class MPC(Controller):
         self.save_all_models = params.log_cfg.get("save_all_models", False)
         self.log_traj_preds = params.log_cfg.get("log_traj_preds", False)
         self.log_particles = params.log_cfg.get("log_particles", False)
-
-        self.should_calibrate = calibrate
 
         # Perform argument checks
         if self.prop_mode not in ["E", "DS", "MM", "TS1", "TSinf"]:
@@ -173,32 +211,56 @@ class MPC(Controller):
             obs_trajs: A list of observation matrices, observations in rows.
             acs_trajs: A list of action matrices, actions in rows.
             rews_trajs: A list of reward arrays.
+            logdir: Optional log directory for saving model.
 
         Returns: None.
         """
         # Construct new training points and add to training set
         new_train_in, new_train_targs = [], []
+        new_domain_vecs = []  # Store domain vectors for each trajectory
+        
         for obs, acs in zip(obs_trajs, acs_trajs):
+            # Verify observation dimensions are consistent
+            assert obs.shape[1] == self.dO, f"Expected observation dimension {self.dO}, got {obs.shape[1]}"
+            
             new_train_in.append(np.concatenate([self.obs_preproc(obs[:-1]), acs], axis=-1))
             new_train_targs.append(self.targ_proc(obs[:-1], obs[1:]))
+            
+            # Get domain vector for this trajectory
+            if self.domain_vector is not None:
+                # Generate domain vector for each step in the trajectory
+                traj_length = obs[:-1].shape[0]
+                new_domain_vecs.append(np.tile(self.domain_vector, (traj_length, 1)))
+            else:
+                new_domain_vecs.append(None)
 
         # evaluate calibration on this unseen data before training on it
         if logdir:
             self.model.save_calibration_info(new_train_in[0], new_train_targs[0], logdir, calibrate=self.should_calibrate)
 
-
         self.train_in = np.concatenate([self.train_in] + new_train_in, axis=0)
         self.train_targs = np.concatenate([self.train_targs] + new_train_targs, axis=0)
-
+        
+        # Store domain vectors
+        if not hasattr(self, 'domain_vecs'):
+            self.domain_vecs = []
+        self.domain_vecs.extend(new_domain_vecs)
 
         train_in, cal_in, train_targs, cal_targs = train_test_split(self.train_in, self.train_targs, test_size=0.2)
+        
+        # Split domain vectors accordingly
+        if hasattr(self, 'domain_vecs') and self.domain_vecs and self.domain_vecs[0] is not None:
+            all_domain_vecs = np.concatenate([dv for dv in self.domain_vecs if dv is not None], axis=0)
+            _, cal_domains = train_test_split(all_domain_vecs, test_size=0.2)
+        else:
+            cal_domains = None
 
         # Train the model
         self.model.train(train_in, train_targs, **self.model_train_cfg)
 
         if self.should_calibrate:
-            print("Calibrating model...")
-            self.model.calibrate(cal_in, cal_targs, **self.model_train_cfg)
+            print("Calibrating model...", flush=True)
+            self.model.calibrate(cal_in, cal_targs, domains=cal_domains, **self.model_train_cfg)
 
         if logdir:
             self.model.save(logdir)
@@ -369,12 +431,27 @@ class MPC(Controller):
             if self.prop_mode == "TS1" or self.prop_mode == "TSinf":
                 proc_obs, acs = self._expand_to_ts_format(proc_obs), self._expand_to_ts_format(acs)
 
-            # Obtain model predictions
+            # Obtain model predictions with domain vector support
             inputs = tf.concat([proc_obs, acs], axis=-1)
-            mean, var = self.model.create_prediction_tensors(inputs)
+            
+            # Pass domain vector to model if available and calibration is enabled
+            if self.domain_vector is not None and self.should_calibrate:
+                domain_vec = tf.constant(self.domain_vector, dtype=tf.float32)
+                domain_vec = tf.reshape(domain_vec, [1, -1])
+                domain_vec = tf.tile(domain_vec, [tf.shape(inputs)[0], 1])
+                mean, var = self.model.create_prediction_tensors(inputs, domain_vec=domain_vec)
+            else:
+                mean, var = self.model.create_prediction_tensors(inputs)
 
             if self.model.is_probabilistic and not self.ign_var:
-                predictions = self.model.sample_predictions(mean, var, calibrate=self.should_calibrate)
+                # Pass domain vector to sample_predictions if available
+                if self.domain_vector is not None and self.should_calibrate:
+                    domain_vec = tf.constant(self.domain_vector, dtype=tf.float32)
+                    domain_vec = tf.reshape(domain_vec, [1, -1])
+                    domain_vec = tf.tile(domain_vec, [tf.shape(mean)[0], 1])
+                    predictions = self.model.sample_predictions(mean, var, domain_vec=domain_vec, calibrate=self.should_calibrate)
+                else:
+                    predictions = self.model.sample_predictions(mean, var, calibrate=self.should_calibrate)
 
                 if self.prop_mode == "MM":
                     model_out_dim = predictions.get_shape()[-1].value

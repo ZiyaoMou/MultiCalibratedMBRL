@@ -3,8 +3,10 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 
-def get_required_argument(dotmap, key, message, default=None):
-    val = dotmap.get(key, default)
-    if val is default:
-        raise ValueError(message)
-    return val
+def get_required_argument(dotmap, name, default=None):
+    if name in dotmap:
+        return dotmap[name]
+    elif default is not None:
+        return default
+    else:
+        raise ValueError(f"Missing required argument: '{name}'")

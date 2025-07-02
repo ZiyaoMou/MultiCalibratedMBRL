@@ -23,7 +23,8 @@ class ReacherConfigModule:
     MODEL_IN, MODEL_OUT = 24, 17
     GP_NINDUCING_POINTS = 200
 
-    def __init__(self):
+    def __init__(self, emb_dim=None):
+        self.emb_dim = emb_dim
         self.ENV = gym.make(self.ENV_NAME)
         self.ENV.reset()
         cfg = tf.ConfigProto()
@@ -75,7 +76,9 @@ class ReacherConfigModule:
         model = get_required_argument(model_init_cfg, "model_class", "Must provide model class")(DotMap(
             name="model", num_networks=get_required_argument(model_init_cfg, "num_nets", "Must provide ensemble size"),
             sess=self.SESS, load_model=model_init_cfg.get("load_model", False),
-            model_dir=model_init_cfg.get("model_dir", None)
+            model_dir=model_init_cfg.get("model_dir", None),
+            emb_dim=model_init_cfg.get("emb_dim", None),
+            cal_hidden=model_init_cfg.get("cal_hidden", 16)
         ))
         if not model_init_cfg.get("load_model", False):
             model.add(FC(200, input_dim=self.MODEL_IN, activation="swish", weight_decay=0.00025))

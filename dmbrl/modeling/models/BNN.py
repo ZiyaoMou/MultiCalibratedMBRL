@@ -45,6 +45,11 @@ class BNN:
         """
         self.name = get_required_argument(params, 'name', 'Must provide name.')
         self.model_dir = params.get('model_dir', None)
+        self.emb_dim = params.get('emb_dim', None)
+        if params.get('cal_hidden', None) is not None:
+            self.cal_hidden = params.get('cal_hidden')
+        else:
+            self.cal_hidden = 16
 
         if params.get('sess', None) is None:
             config = tf.ConfigProto()
@@ -162,9 +167,15 @@ class BNN:
         self.end_act_name = self.layers[-1].get_activation(as_func=False)
         self.layers[-1].unset_activation()
 
-        self.recalibrator = RecalibrationLayer(out_dim)
+        # self.recalibrator = RecalibrationLayer(out_dim)
 
-        self.cal_vars = self.recalibrator.get_vars()
+        # self.cal_vars = self.recalibrator.get_vars()
+        
+        self.recalibrator = RecalibrationLayer(
+            out_dim,
+            emb_dim=self.emb_dim,
+            hidden=self.cal_hidden,
+        )
 
         # Construct all variables.
         with self.sess.as_default():
@@ -199,24 +210,35 @@ class BNN:
             self.train_op = self.optimizer.minimize(train_loss, var_list=self.optvars)
 
         with tf.variable_scope('calibration'):
+            if self.recalibrator.emb_dim is None:
+                dom_dim = 1    
+            else:
+                dom_dim = self.recalibrator.emb_dim
             self.sy_cdf_in = tf.placeholder(dtype=tf.float32,
                                               shape=[None, self.recalibrator.get_output_dim()],
                                               name="training_inputs_cdf")
 
+            self.sy_dom_in = tf.placeholder(dtype=tf.float32,
+                                shape=[None, dom_dim],
+                                name="domain_vec")
+
             self.sy_cdf_true = tf.placeholder(dtype=tf.float32,
                                                 shape=[None, self.recalibrator.get_output_dim()],
                                                 name="training_targets_cdf")
-
-
+            
             self.cal_optimizer = tf.train.AdamOptimizer(learning_rate=5e-2)
 
-            cdf_pred = self.recalibrator(self.sy_cdf_in, activation=False)
-            cross_entropy = tf.nn.sigmoid_cross_entropy_with_logits(labels=self.sy_cdf_true, logits=cdf_pred)
+            cdf_logits = self.recalibrator(self.sy_cdf_in,
+                               domain_vec=self.sy_dom_in,
+                               activation=False)
+
+            cross_entropy = tf.nn.sigmoid_cross_entropy_with_logits(
+                labels=self.sy_cdf_true, logits=cdf_logits)
+            
+            self.cal_vars = self.recalibrator.trainable_variables
             self.cal_loss = tf.reduce_mean(tf.reduce_mean(cross_entropy, axis=-1), axis=-1)
 
             self.cal_train_op = self.cal_optimizer.minimize(self.cal_loss, var_list=self.cal_vars)
-
-
 
         # Initialize all variables
         self.sess.run(tf.variables_initializer(self.optvars + self.nonoptvars + self.optimizer.variables() + self.cal_vars + self.cal_optimizer.variables()))
@@ -244,14 +266,14 @@ class BNN:
                 params_dict = loadmat(os.path.join(self.model_dir, "%s.mat" % self.name))
                 all_vars = self.nonoptvars + self.optvars + self.cal_vars
                 for i, var in enumerate(all_vars):
-                    var.load(params_dict[str(i)])
+                    var.assign(params_dict[str(i)])
         self.finalized = True
 
     #################
     # Model Methods #
     #################
     def calibrate(self, inputs, targets,
-              batch_size=32, epochs=1000,
+              batch_size=32, epochs=1000, domains=None,
               hide_progress=False, holdout_ratio=0.0, max_logging=5000):
         """Calibrates network post-training
 
@@ -271,58 +293,62 @@ class BNN:
         all_mus, all_vars = self.predict(inputs)
         all_ys = targets
 
-        train_x = np.zeros_like(all_ys)
-        train_y = np.zeros_like(all_ys)
+        # ---------- Build training set ----------
+        qs = np.linspace(0.05, 0.95, 19)          # 19 confidence levels
+        z  = norm.ppf(qs)                         # N(0,1) quantiles
 
-        for d in range(all_mus.shape[1]):
-            mu = all_mus[:, d]
-            var = all_vars[:, d]
-            ys = all_ys[:, d]
+        feats, labels, dom_list = [], [], []
 
-            cdf_pred = norm.cdf(ys, loc=mu, scale=np.sqrt(var))
-            cdf_true = np.array([np.sum(cdf_pred < p)/len(cdf_pred) for p in cdf_pred])
+        # Handle domain vectors
+        if self.recalibrator.emb_dim is None:
+            # For single-domain calibration, use zeros as domain vectors (dim=1)
+            domains = np.zeros((inputs.shape[0], 1), dtype=np.float32)
+        else:
+            if domains is None or domains.shape[0] != inputs.shape[0]:
+                raise ValueError("For multi-domain calibration each sample must provide a domain_vec")
+            domains = domains.astype(np.float32)
 
-            train_x[:, d] = cdf_pred
-            train_y[:, d] = cdf_true
+        # Build data per sample
+        for mu, var, y, dom in zip(all_mus, all_vars, all_ys, domains):
+            for q, zq in zip(qs, z):
+                feats.append(np.full_like(y, q))                  # (D,)
+                labels.append((y <= mu + np.sqrt(var) * zq).astype(np.float32))  # (D,)
+                dom_list.append(dom)                              # (emb_dim,)
+
+        train_x = np.vstack(feats)        # (N·19, D)
+        train_y = np.vstack(labels)       # (N·19, D)
+        dom_arr = np.vstack(dom_list)     # (N·19, emb_dim)
 
         epochs=200
 
         if hide_progress:
             epoch_range = range(epochs)
         else:
-            epoch_range = trange(epochs, unit="epoch(s)", desc="Calibration training")
+            epoch_range = trange(epochs, unit="epoch", desc="Calibration")
 
-
-        def iterate_minibatches(inp, targs, batchsize, shuffle=True):
-            assert inp.shape[0] == targs.shape[0]
-            indices = np.arange(inp.shape[0])
+        def iterate_minibatches(inp, targs, doms, batchsize, shuffle=True):
+            assert inp.shape[0] == targs.shape[0] == doms.shape[0]
+            idx = np.arange(inp.shape[0])
             if shuffle:
-                np.random.shuffle(indices)
+                np.random.shuffle(idx)
 
-            last_idx = 0
-
-            for curr_idx in range(0, inp.shape[0] - batchsize + 1, batchsize):
-                curr_batch = indices[curr_idx : curr_idx + batchsize]
-                last_idx = curr_idx + batchsize
-                yield inp[curr_batch], targs[curr_batch]
-
-            if inp.shape[0] % batchsize != 0:
-                last_batch = indices[last_idx:]
-                yield inp[last_batch], targs[last_batch]
+            for start in range(0, len(idx), int(batchsize)):
+                sl = idx[start:start + batchsize]
+                yield inp[sl], targs[sl], doms[sl]
 
         for _ in epoch_range:
-            for x_batch, y_batch in iterate_minibatches(train_x, train_y, batch_size):
-                self.sess.run(
-                    self.cal_train_op,
-                    feed_dict={self.sy_cdf_in: x_batch, self.sy_cdf_true: y_batch}
-                )
-
+            for xb, yb, db in iterate_minibatches(train_x, train_y, dom_arr, batch_size):
+                self.sess.run(self.cal_train_op,
+                            feed_dict={self.sy_cdf_in: xb,
+                                        self.sy_cdf_true: yb,
+                                        self.sy_dom_in: db})
             if not hide_progress:
                 epoch_range.set_postfix({
-                    "Training loss(es)": self.sess.run(
+                    "cal_loss": self.sess.run(
                         self.cal_loss,
-                        feed_dict={self.sy_cdf_in: train_x, self.sy_cdf_true: train_y}
-                    )
+                        feed_dict={self.sy_cdf_in: train_x,
+                                self.sy_cdf_true: train_y,
+                                self.sy_dom_in: dom_arr})
                 })
 
 
@@ -331,14 +357,24 @@ class BNN:
         all_mus, all_vars = self.predict(inputs)
         all_ys = targets
 
-
         all_cdfs_pred = norm.cdf(all_ys, loc=all_mus, scale=np.sqrt(all_vars))
-        all_cdfs_pred_cal = self.sess.run(self.recalibrator(all_cdfs_pred)) if calibrate else []
+        
+        # Apply calibration if enabled
+        if calibrate:
+            if self.recalibrator.emb_dim is None:
+                # Single-domain calibration: pass zeros as domain vector (consistent with training)
+                domain_vec = np.zeros((all_cdfs_pred.shape[0], 1), dtype=np.float32)
+                all_cdfs_pred_cal = self.sess.run(self.recalibrator(all_cdfs_pred, domain_vec=domain_vec))
+            else:
+                # Multi-domain calibration: need domain vectors
+                all_cdfs_pred_cal = self.sess.run(self.recalibrator(all_cdfs_pred))
+        else:
+            all_cdfs_pred_cal = all_cdfs_pred  # No calibration applied
 
         # Save network parameters (including scalers) in a .mat file
         save_vals = {
             'all_mus': all_mus,
-            'all_vars': all_mus,
+            'all_vars': all_vars,  # Fixed: was all_mus, should be all_vars
             'all_ys': targets,
             'all_cdfs_pred': all_cdfs_pred,
             'all_cdfs_pred_cal': all_cdfs_pred_cal
@@ -355,7 +391,15 @@ class BNN:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
         all_cdfs_pred = norm.cdf(all_ys, loc=all_mus, scale=np.sqrt(all_vars))
-        all_cdfs_pred_cal = self.sess.run(self.recalibrator(all_cdfs_pred))
+        
+        # Apply calibration
+        if self.recalibrator.emb_dim is None:
+            # Single-domain calibration: pass zeros as domain vector (consistent with training)
+            domain_vec = np.zeros((all_cdfs_pred.shape[0], 1), dtype=np.float32)
+            all_cdfs_pred_cal = self.sess.run(self.recalibrator(all_cdfs_pred, domain_vec=domain_vec))
+        else:
+            # Multi-domain calibration: need domain vectors
+            all_cdfs_pred_cal = self.sess.run(self.recalibrator(all_cdfs_pred))
 
         for d in range(all_mus.shape[1]):
             mu = all_mus[:, d]
@@ -394,7 +438,7 @@ class BNN:
             print('Saving dim={}'.format(d))
             plt.savefig(os.path.join(save_dir, 'cal_{}_dim_{}.png'.format(timestamp, d)))
 
-    def sample_predictions(self, means, var, calibrate=True):
+    def sample_predictions(self, means, var, domain_vec=None, calibrate=True):
         """
             Input shape of mean and var is N x d where N
             is batch size and d is size of state space dimension
@@ -402,9 +446,19 @@ class BNN:
         if not calibrate:
             return means + tf.random_normal(shape=tf.shape(means), mean=0, stddev=1) * tf.sqrt(var)
 
-        ps = tf.random.uniform(shape=means.shape)
+        ps = tf.random.uniform(shape=means.shape)       # U(0,1)
 
-        ps = self.recalibrator.inv_call(ps, activation=True)
+        if self.recalibrator.emb_dim is None:           # single-domain
+            # For single-domain calibration, pass zeros as domain vector (consistent with training)
+            batch_size = tf.shape(means)[0]
+            domain_vec = tf.zeros([batch_size, 1], dtype=tf.float32)
+            ps = self.recalibrator.inv_call(ps, domain_vec=domain_vec, activation=True)
+        else:                                           # multi-domain
+            if domain_vec is None:
+                raise ValueError("domain_vec must be provided for multi-domain sampling")
+            ps = self.recalibrator.inv_call(
+                    ps, domain_vec=domain_vec, activation=True)
+
         ps = tf.clip_by_value(ps, 1e-6, 1 - 1e-6)
 
         dist = tfp.distributions.Normal(loc=means, scale=tf.sqrt(var))
@@ -440,14 +494,20 @@ class BNN:
         holdout_inputs = np.tile(holdout_inputs[None], [self.num_nets, 1, 1])
         holdout_targets = np.tile(holdout_targets[None], [self.num_nets, 1, 1])
 
+        # Prepare data and scaler
         with self.sess.as_default():
             self.scaler.fit(inputs)
 
+        # Prepare training indices
         idxs = np.random.randint(inputs.shape[0], size=[self.num_nets, inputs.shape[0]])
+        
+        # Create progress bar only after all preparation is done
         if hide_progress:
             epoch_range = range(epochs)
         else:
             epoch_range = trange(epochs, unit="epoch(s)", desc="Network training")
+            
+        # Start training loop
         for _ in epoch_range:
             for batch_num in range(int(np.ceil(idxs.shape[-1] / batch_size))):
                 batch_idxs = idxs[:, batch_num * batch_size:(batch_num + 1) * batch_size]

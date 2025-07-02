@@ -33,6 +33,8 @@ def create_config(env_name, ctrl_type, ctrl_args, overrides, logdir):
         ),
         ctrl_cfg=DotMap(
             per=int,
+            emb_dim=int,
+            cal_hidden=int,
             prop_cfg=DotMap(
                 model_pretrained=make_bool,
                 npart=int,
@@ -54,8 +56,9 @@ def create_config(env_name, ctrl_type, ctrl_args, overrides, logdir):
     spec = importlib.util.spec_from_loader(loader.name, loader)
     cfg_source = importlib.util.module_from_spec(spec)
     loader.exec_module(cfg_source)
-    cfg_module = cfg_source.CONFIG_MODULE()
-
+    cfg_module = cfg_source.CONFIG_MODULE(
+        emb_dim=ctrl_args.get("emb_dim", None)
+    )
     _create_exp_config(cfg.exp_cfg, cfg_module, logdir, type_map)
     _create_ctrl_config(cfg.ctrl_cfg, cfg_module, ctrl_type, ctrl_args, type_map)
 
@@ -98,6 +101,14 @@ def _create_ctrl_config(ctrl_cfg, cfg_module, ctrl_type, ctrl_args, type_map):
 
         # Process arguments here.
         model_init_cfg = ctrl_cfg.prop_cfg.model_init_cfg
+        
+        # Pass emb_dim and cal_hidden parameters to model configuration
+        print('ctrl_args: ', ctrl_args)
+        if ctrl_args.get('emb_dim', None) is not None:
+            model_init_cfg.emb_dim = int(ctrl_args.emb_dim)
+        if ctrl_args.get('cal_hidden', None) is not None:
+            model_init_cfg.cal_hidden = int(ctrl_args.cal_hidden)
+        
         if ctrl_args.get("model-type", "PE") in ["P", "PE", "D", "DE"]:
             ctrl_args["model-type"] = ctrl_args.get("model-type", "PE")
             if ctrl_args["model-type"][0] == "P":

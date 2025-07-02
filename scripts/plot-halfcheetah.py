@@ -41,13 +41,16 @@ def find_log_files(experiment_base):
     return log_files
 
 log_dirs = {
-    "PE-DS-calibrate": find_log_files("halfcheetah_calibrated"),
-    "PE-DS-no-calibrate": find_log_files("halfcheetah_uncalibrated"),
+    "Multi-Domain Calibration": find_log_files("halfcheetah_multical"),
+    "Single-Domain Calibration": find_log_files("halfcheetah_singlecal"),
+    "No Calibration": find_log_files("halfcheetah_uncalibrated"),
 }
 
-plt.figure(figsize=(8, 5))
+plt.figure(figsize=(10, 6))
 
-for label, paths in log_dirs.items():
+colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # Blue, Orange, Green
+
+for i, (label, paths) in enumerate(log_dirs.items()):
     all_max_returns = []
     for path in paths:
         if not os.path.exists(path):
@@ -56,28 +59,57 @@ for label, paths in log_dirs.items():
 
         data = loadmat(path)
         returns = data["returns"]
-        returns = returns[:, :73]
+        returns = returns[:, :180]
         
         # Calculate maximum reward up to each point
         max_returns = np.maximum.accumulate(returns[0])
         all_max_returns.append(max_returns)
     
     if all_max_returns:
-        # Stack all max returns from different runs
-        stacked_max_returns = np.vstack(all_max_returns)
-        mean = np.mean(stacked_max_returns, axis=0)
-        ste = np.std(stacked_max_returns, axis=0) / np.sqrt(stacked_max_returns.shape[0])
-        x = np.arange(1, len(mean) + 1) * 1000
+        # Find the maximum length among all runs
+        max_length = max(len(arr) for arr in all_max_returns)
+        print(f"{label}: max_length = {max_length}, num_runs = {len(all_max_returns)}")
         
-        plt.plot(x, mean, label=label)
-        plt.fill_between(x, mean - ste, mean + ste, alpha=0.2)
+        # Calculate mean and standard error for each timestep
+        means = []
+        stes = []
+        
+        for t in range(max_length):
+            # Collect values at timestep t from all runs that have data at this timestep
+            values_at_t = []
+            for arr in all_max_returns:
+                if t < len(arr):
+                    values_at_t.append(arr[t])
+            
+            if values_at_t:
+                mean_val = np.mean(values_at_t)
+                ste_val = np.std(values_at_t) / np.sqrt(len(values_at_t))
+                means.append(mean_val)
+                stes.append(ste_val)
+            else:
+                means.append(np.nan)
+                stes.append(np.nan)
+        
+        means = np.array(means)
+        stes = np.array(stes)
+        
+        # Remove NaN values
+        valid_mask = ~np.isnan(means)
+        means = means[valid_mask]
+        stes = stes[valid_mask]
+        x = np.arange(1, len(means) + 1) * 1000
+        
+        plt.plot(x, means, label=label, color=colors[i], linewidth=2)
+        plt.fill_between(x, means - stes, means + stes, alpha=0.2, color=colors[i])
 
-plt.title("halfcheetah")
-plt.xlabel("Number of Timesteps")
-plt.ylabel("Maximum Reward")
-plt.legend()
-plt.grid(True)
+plt.title("HalfCheetah: Comparison of Calibration Methods", fontsize=14, fontweight='bold')
+plt.xlabel("Number of Timesteps", fontsize=12)
+plt.ylabel("Maximum Reward", fontsize=12)
+plt.legend(fontsize=11)
+plt.grid(True, alpha=0.3)
 plt.tight_layout()
 
-plt.savefig("images/halfcheetah_comparison-max.png")
+# Create images directory if it doesn't exist
+os.makedirs("images/multi-cal", exist_ok=True)
+plt.savefig("images/multi-cal/halfcheetah_calibration_comparison.png", dpi=300, bbox_inches='tight')
 plt.show()

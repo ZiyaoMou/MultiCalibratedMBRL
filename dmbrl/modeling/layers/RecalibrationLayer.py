@@ -2,39 +2,48 @@ import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 
 class RecalibrationLayer(tf.keras.layers.Layer):
-    def __init__(self, out_dim):
-        super(RecalibrationLayer, self).__init__()
-        
-        shape = [1, out_dim]
-        self.out_dim = out_dim
+    def __init__(self, out_dim, emb_dim=None, hidden=16, name='RecalibrationLayer'):
+        super().__init__(name=name)
+        self.out_dim   = out_dim
+        self.emb_dim   = emb_dim 
+        self.hidden    = hidden
 
-        self.A = self.add_variable(name='A',
-                                 shape=shape,
-                                 initializer='uniform',
-                                 trainable=True, dtype=tf.float32)
+        # Initialize A to 1 and B to 0 for identity mapping when not calibrated
+        self.A = self.add_weight('A', shape=[1, out_dim],
+                                 initializer='uniform', trainable=True)
+        self.B = self.add_weight('B', shape=[1, out_dim],
+                                 initializer='uniform', trainable=True)
 
-        self.B = self.add_variable(name='B',
-                                 shape=shape,
-                                 initializer='uniform',
-                                 trainable=True, dtype=tf.float32)
-
-    def get_vars(self):
-        return [self.A, self.B]
+        if emb_dim is not None:
+            self.fc1 = tf.keras.layers.Dense(hidden, activation='relu')
+            self.fc2 = tf.keras.layers.Dense(2 * out_dim, activation=None)
 
     def get_output_dim(self):
         return self.out_dim
 
-    def call(self, x, activation=True):
+    def call(self, x, domain_vec=None, activation=True):
         x = tf.cast(x, tf.float32)
-        out = x * self.A + self.B
-        if not activation:
-            return out
+        if self.emb_dim is None or domain_vec is None:
+            A, B = self.A, self.B
+        else:
+            delta = self.fc2(self.fc1(domain_vec))              
+            dA, dB = tf.split(delta, 2, axis=-1)
+            A = self.A * (1.0 + tf.tanh(dA))         
+            B = self.B + dB
 
-        return tf.nn.sigmoid(out)
+        out = x * A + B
+        return tf.nn.sigmoid(out) if activation else out
 
-    def inv_call(self, y, activation=True):
-        out = y
+    def inv_call(self, y, domain_vec=None, activation=True):
+        y = tf.cast(y, tf.float32)
         if activation:
-            out  = tf.log(y/(1 - y))
+            y = tf.log(y / (1. - y))                               # σ⁻¹(y)
 
-        return (out - self.B)/self.A
+        if self.emb_dim is None or domain_vec is None:
+            A, B = self.A, self.B
+        else:
+            delta = self.fc2(self.fc1(domain_vec))
+            dA, dB = tf.split(delta, 2, axis=-1)
+            A = self.A * (1.0 + tf.tanh(dA))
+            B = self.B + dB
+        return (y - B) / A

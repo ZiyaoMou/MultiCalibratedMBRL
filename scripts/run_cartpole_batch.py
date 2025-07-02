@@ -12,7 +12,7 @@ def run_job(logdir, calibrated):
     return subprocess.Popen(cmd, shell=True)
 
 def main():
-    for i in range(0, 10):
+    for i in range(0, 1):
         print(f"\n=== Starting run {i}: launching uncalibrated and calibrated in parallel ===")
 
         proc_uncal = run_job(f"log/1_cartpole_uncalibrated-{i}", calibrated=False)

@@ -3,7 +3,7 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import numpy as np
-from gym.monitoring import VideoRecorder
+from gym.wrappers.monitoring.video_recorder import VideoRecorder
 from dotmap import DotMap
 
 import time
@@ -50,7 +50,29 @@ class Agent:
         recorder = None if not video_record else VideoRecorder(self.env, record_fname)
 
         times, rewards = [], []
-        O, A, reward_sum, done = [self.env.reset()], [], 0, False
+        # Get domain vector from environment if available
+        domain_vec = None
+        if hasattr(self.env, 'get_domain_vector'):
+            domain_vec = self.env.get_domain_vector()
+        elif hasattr(self.env, 'domain_vector'):
+            domain_vec = self.env.domain_vector
+        # If no domain vector is available, don't add any
+        
+        # Initialize with reset observation
+        reset_result = self.env.reset()
+        if isinstance(reset_result, tuple):
+            obs = reset_result[0]  # Gym 0.26+: (obs, info)
+        else:
+            obs = reset_result     # Gym < 0.26
+
+        # Convert observation to float32
+        obs = obs.astype(np.float32)
+
+        # Concatenate domain vector with observation if available
+        if domain_vec is not None and len(domain_vec) > 0:
+            obs = np.concatenate([obs, domain_vec], axis=-1)
+
+        O, A, reward_sum, done = [obs.copy()], [], 0, False
 
         policy.reset()
         for t in range(horizon):
@@ -61,12 +83,23 @@ class Agent:
             times.append(time.time() - start)
 
             if self.noise_stddev is None:
-                obs, reward, done, info = self.env.step(A[t])
+                next_obs, reward, terminated, truncated, info = self.env.step(A[t])
             else:
                 action = A[t] + np.random.normal(loc=0, scale=self.noise_stddev, size=[self.dU])
                 action = np.minimum(np.maximum(action, self.env.action_space.low), self.env.action_space.high)
-                obs, reward, done, info = self.env.step(action)
-            O.append(obs)
+                next_obs, reward, terminated, truncated, info = self.env.step(action)
+            
+            # Combine terminated and truncated into done for backward compatibility
+            done = terminated or truncated
+            
+            # Convert next observation to float32
+            next_obs = next_obs.astype(np.float32)
+            
+            # Concatenate domain vector with next observation if available
+            if domain_vec is not None and len(domain_vec) > 0:
+                next_obs = np.concatenate([next_obs, domain_vec], axis=-1)
+            
+            O.append(next_obs.copy())  # Save the next observation
             reward_sum += reward
             rewards.append(reward)
             if done:
@@ -80,8 +113,9 @@ class Agent:
         print("Rollout length: ", len(A))
 
         return {
-            "obs": np.array(O),
-            "ac": np.array(A),
+            "obs": np.array(O, dtype=np.float32),
+            "ac": np.array(A, dtype=np.float32),
             "reward_sum": reward_sum,
-            "rewards": np.array(rewards),
+            "rewards": np.array(rewards, dtype=np.float32),
+            "domain_vec": domain_vec,
         }
