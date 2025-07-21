@@ -16,7 +16,7 @@ SAVE_EVERY = 25
 
 
 class MBExperiment:
-    def __init__(self, params):
+    def __init__(self, params, multi_domain=False):
         """Initializes class instance.
 
         Argument:
@@ -71,6 +71,7 @@ class MBExperiment:
         )
         self.nrecord = params.log_cfg.get("nrecord", 0)
         self.neval = params.log_cfg.get("neval", 1)
+        self.multi_domain = multi_domain
 
     def run_experiment(self):
         """Perform experiment.
@@ -153,3 +154,50 @@ class MBExperiment:
             if len(os.listdir(iter_dir)) == 0:
                 os.rmdir(iter_dir)
 
+    def run_experiment_multi_domain(self, domains, env):
+        """Perform experiment with multiple domains."""
+        os.makedirs(self.logdir, exist_ok=True)
+
+        domain_obs_trajs = [[] for _ in domains]
+        domain_acs_trajs = [[] for _ in domains]
+        domain_rews_trajs = [[] for _ in domains]
+        domain_rets = [[] for _ in domains]
+
+        for i in range(self.ntrain_iters):
+            print("####################################################################")
+            print("Starting multi-domain training iteration %d." % (i + 1))
+
+            iter_dir = os.path.join(self.logdir, f"train_iter{i+1}")
+            os.makedirs(iter_dir, exist_ok=True)
+
+            for d_idx, domain_id in enumerate(domains):
+                print(f"  Sampling from domain {domain_id}...")
+                agent = Agent(DotMap(env=env, noisy_actions=False))
+
+                samples = []
+                for _ in range(self.nrollouts_per_iter):
+                    samples.append(agent.sample(self.task_hor, self.policy))
+
+                domain_obs_trajs[d_idx].extend([s["obs"] for s in samples])
+                domain_acs_trajs[d_idx].extend([s["ac"] for s in samples])
+                domain_rews_trajs[d_idx].extend([s["rewards"] for s in samples])
+                domain_rets[d_idx].extend([s["reward_sum"] for s in samples])
+
+            print("Domain rewards summary:")
+            for d_idx, domain_id in enumerate(domains):
+                rets = domain_rets[d_idx]
+                print(f"  Domain {domain_id}: avg return = {np.mean(rets):.2f}, min = {np.min(rets):.2f}")
+
+            # Train controller on all domain data
+            self.policy.train_with_domains(domain_obs_trajs, domain_acs_trajs, domain_rews_trajs, logdir=iter_dir)
+
+            self.policy.dump_logs(self.logdir, iter_dir if (i + 1) % SAVE_EVERY == 0 else None)
+            savemat(
+                os.path.join(self.logdir, f"logs_iter{i+1}.mat"),
+                {
+                    "observations": domain_obs_trajs,
+                    "actions": domain_acs_trajs,
+                    "rewards": domain_rews_trajs,
+                    "returns": domain_rets
+                }
+            )

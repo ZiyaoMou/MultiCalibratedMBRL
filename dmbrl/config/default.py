@@ -46,15 +46,21 @@ def create_config(env_name, ctrl_type, ctrl_args, overrides, logdir):
                 log_traj_preds=make_bool,
                 log_particles=make_bool
             )
-        )
+        ),
+        domains=list,
     )
 
     dir_path = os.path.dirname(os.path.realpath(__file__))
     loader = importlib.machinery.SourceFileLoader(env_name, os.path.join(dir_path, "%s.py" % env_name))
+    print(os.path.join(dir_path, "%s.py" % env_name))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     cfg_source = importlib.util.module_from_spec(spec)
     loader.exec_module(cfg_source)
     cfg_module = cfg_source.CONFIG_MODULE()
+    if hasattr(cfg_module, "get_all_domain_configs"):
+        cfg.domains = cfg_module.get_all_domain_configs()
+    else:
+        cfg.domains = []
 
     _create_exp_config(cfg.exp_cfg, cfg_module, logdir, type_map)
     _create_ctrl_config(cfg.ctrl_cfg, cfg_module, ctrl_type, ctrl_args, type_map)

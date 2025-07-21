@@ -79,5 +79,5 @@ plt.legend()
 plt.grid(True)
 plt.tight_layout()
 
-plt.savefig("images/1-cartpole_comparison-max.png")
+plt.savefig("images/1-cartpole_comparison-max-new.png")
 plt.show()

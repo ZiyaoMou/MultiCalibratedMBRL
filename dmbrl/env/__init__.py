@@ -29,3 +29,13 @@ register(
     id='MBRLAnt-v0',
     entry_point='dmbrl.env.ant:AntEnv'
 )
+
+register(
+    id="MBRLHalfCheetah-v4",
+    entry_point='dmbrl.env.half_cheetah_v4:HalfCheetahEnv'
+)
+
+register(
+    id="MBRLHalfCheetahMultiDomain-v4",
+    entry_point='dmbrl.env.halt_cheetah_multi_domain:MultiDomainHalfCheetahEnv'
+)

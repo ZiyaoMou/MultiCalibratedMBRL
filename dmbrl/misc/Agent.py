@@ -3,7 +3,7 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import numpy as np
-from gym.monitoring import VideoRecorder
+from gym.wrappers.monitoring.video_recorder import VideoRecorder
 from dotmap import DotMap
 
 import time
@@ -50,7 +50,8 @@ class Agent:
         recorder = None if not video_record else VideoRecorder(self.env, record_fname)
 
         times, rewards = [], []
-        O, A, reward_sum, done = [self.env.reset()], [], 0, False
+        obs, _ = self.env.reset()
+        O, A, reward_sum, done = [obs], [], 0, False
 
         policy.reset()
         for t in range(horizon):
@@ -61,11 +62,13 @@ class Agent:
             times.append(time.time() - start)
 
             if self.noise_stddev is None:
-                obs, reward, done, info = self.env.step(A[t])
+                obs, reward, terminated, truncated, info = self.env.step(A[t])
             else:
                 action = A[t] + np.random.normal(loc=0, scale=self.noise_stddev, size=[self.dU])
-                action = np.minimum(np.maximum(action, self.env.action_space.low), self.env.action_space.high)
-                obs, reward, done, info = self.env.step(action)
+                action = np.clip(action, self.env.action_space.low, self.env.action_space.high)
+                obs, reward, terminated, truncated, info = self.env.step(action)
+            done = terminated or truncated
+
             O.append(obs)
             reward_sum += reward
             rewards.append(reward)

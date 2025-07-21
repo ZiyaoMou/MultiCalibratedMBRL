@@ -20,7 +20,7 @@ from sklearn.model_selection import train_test_split
 class MPC(Controller):
     optimizers = {"CEM": CEMOptimizer, "Random": RandomOptimizer}
 
-    def __init__(self, params, calibrate=False):
+    def __init__(self, params, calibrate=False, multi_domain=False):
         """Creates class instance.
 
         Arguments:
@@ -112,6 +112,7 @@ class MPC(Controller):
         self.log_particles = params.log_cfg.get("log_particles", False)
 
         self.should_calibrate = calibrate
+        self.multi_domain = multi_domain
 
         # Perform argument checks
         if self.prop_mode not in ["E", "DS", "MM", "TS1", "TSinf"]:
@@ -204,6 +205,17 @@ class MPC(Controller):
             self.model.save(logdir)
 
         self.has_been_trained = True
+
+    def train_with_domains(self, domain_obs_trajs, domain_acs_trajs, domain_rews_trajs, logdir=None):
+        """Train and calibrate on combined data from multiple domains."""
+        all_obs_trajs = []
+        all_acs_trajs = []
+        all_rews_trajs = []
+        for obs_trajs, acs_trajs, rews_trajs in zip(domain_obs_trajs, domain_acs_trajs, domain_rews_trajs):
+            all_obs_trajs.extend(obs_trajs)
+            all_acs_trajs.extend(acs_trajs)
+            all_rews_trajs.extend(rews_trajs)
+        self.train(all_obs_trajs, all_acs_trajs, all_rews_trajs, logdir=logdir)
 
     def reset(self):
         """Resets this controller (clears previous solution, calls all update functions).
