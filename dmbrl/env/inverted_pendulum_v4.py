@@ -92,7 +92,8 @@ class InvertedPendulumEnv(MujocoEnv, utils.EzPickle):
         "render_fps": 25,
     }
 
-    def __init__(self, **kwargs):
+    def __init__(self, reset_noise_scale=0.1, **kwargs):
+        self._reset_noise_scale = reset_noise_scale
         utils.EzPickle.__init__(self, **kwargs)
         observation_space = Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float64)
         MujocoEnv.__init__(

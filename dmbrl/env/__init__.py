@@ -39,3 +39,13 @@ register(
     id="MBRLHalfCheetahMultiDomain-v4",
     entry_point='dmbrl.env.halt_cheetah_multi_domain:MultiDomainHalfCheetahEnv'
 )
+
+register(
+    id="MBRLInvertedPendulum-v4",
+    entry_point='dmbrl.env.inverted_pendulum_v4:InvertedPendulumEnv'
+)
+
+register(
+    id="MBRLInvertedPendulumMultiDomain-v4",
+    entry_point='dmbrl.env.inverted_pendulum_multi_domain:MultiDomainInvertedPendulumEnv'
+)

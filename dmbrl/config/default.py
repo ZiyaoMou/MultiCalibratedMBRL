@@ -57,7 +57,6 @@ def create_config(env_name, ctrl_type, ctrl_args, overrides, logdir, noise_scale
     cfg_source = importlib.util.module_from_spec(spec)
     loader.exec_module(cfg_source)
     cfg_module = cfg_source.CONFIG_MODULE(noise_scale=noise_scale)
-
     if hasattr(cfg_module, "get_all_domain_configs"):
         cfg.domains = cfg_module.get_all_domain_configs()
     else:
