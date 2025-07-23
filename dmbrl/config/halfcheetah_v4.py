@@ -10,7 +10,7 @@ from dmbrl.modeling.layers import FC
 
 
 class HalfCheetahConfigModule:
-    ENV_NAME = "HalfCheetah-v4"
+    ENV_NAME = "MBRLHalfCheetah-v4"
     TASK_HORIZON = 1000
     NTRAIN_ITERS = 300
     NROLLOUTS_PER_ITER = 1
@@ -20,8 +20,8 @@ class HalfCheetahConfigModule:
     MODEL_IN, MODEL_OUT = 17 + 6, 17  # (obs + action, delta_obs)
     GP_NINDUCING_POINTS = 300
 
-    def __init__(self):
-        self.ENV = gym.make(self.ENV_NAME)
+    def __init__(self, noise_scale=0.1):
+        self.ENV = gym.make(self.ENV_NAME, reset_noise_scale=noise_scale)
         cfg = tf.ConfigProto()
         cfg.gpu_options.allow_growth = True
         self.SESS = tf.Session(config=cfg)
@@ -38,6 +38,7 @@ class HalfCheetahConfigModule:
                 "alpha": 0.1
             }
         }
+        
 
     @staticmethod
     def obs_preproc(obs):

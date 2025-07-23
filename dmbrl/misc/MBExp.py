@@ -49,6 +49,7 @@ class MBExperiment:
         if params.sim_cfg.get("stochastic", False):
             self.agent = Agent(DotMap(
                 env=self.env, noisy_actions=True,
+                noise_scale=params.sim_cfg.get("noise_scale", None),
                 noise_stddev=get_required_argument(
                     params.sim_cfg,
                     "noise_std",
@@ -56,7 +57,7 @@ class MBExperiment:
                 )
             ))
         else:
-            self.agent = Agent(DotMap(env=self.env, noisy_actions=False))
+            self.agent = Agent(DotMap(env=self.env, noisy_actions=False, noise_scale=params.sim_cfg.get("noise_scale", None)))
 
         self.ntrain_iters = get_required_argument(
             params.exp_cfg, "ntrain_iters", "Must provide number of training iterations."

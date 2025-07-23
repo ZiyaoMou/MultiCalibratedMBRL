@@ -12,7 +12,7 @@ from dotmap import DotMap
 from dmbrl.modeling.models import NN, BNN, TFGP
 
 
-def create_config(env_name, ctrl_type, ctrl_args, overrides, logdir):
+def create_config(env_name, ctrl_type, ctrl_args, overrides, logdir, noise_scale):
     cfg = DotMap()
     type_map = DotMap(
         exp_cfg=DotMap(
@@ -56,7 +56,8 @@ def create_config(env_name, ctrl_type, ctrl_args, overrides, logdir):
     spec = importlib.util.spec_from_loader(loader.name, loader)
     cfg_source = importlib.util.module_from_spec(spec)
     loader.exec_module(cfg_source)
-    cfg_module = cfg_source.CONFIG_MODULE()
+    cfg_module = cfg_source.CONFIG_MODULE(noise_scale=noise_scale)
+
     if hasattr(cfg_module, "get_all_domain_configs"):
         cfg.domains = cfg_module.get_all_domain_configs()
     else:

@@ -14,11 +14,13 @@ from dmbrl.config import create_config
 import importlib
 
 
-def main(env, ctrl_type, calibrate, ctrl_args, overrides, logdir, multi_domain):
+def main(env, ctrl_type, calibrate, ctrl_args, overrides, logdir, multi_domain, noise_scale):
     ctrl_args = DotMap(**{key: val for (key, val) in ctrl_args})
-    cfg = create_config(env, ctrl_type, ctrl_args, overrides, logdir)
+    cfg = create_config(env, ctrl_type, ctrl_args, overrides, logdir, noise_scale)
     cfg_module = importlib.import_module(f"dmbrl.config.{env}")
-    cfg.exp_cfg.cfg_module_cls = cfg_module.CONFIG_MODULE
+    ConfigClass = getattr(cfg_module, [x for x in dir(cfg_module) if x.endswith("ConfigModule")][0])
+    cfg_instance = ConfigClass(noise_scale=noise_scale)
+    cfg.exp_cfg.cfg_module_cls = cfg_instance
     cfg.pprint()
 
     if ctrl_type == "MPC":
@@ -50,8 +52,10 @@ if __name__ == "__main__":
                         help='Override default parameters, see https://github.com/kchua/handful-of-trials#overrides')
     parser.add_argument('-logdir', type=str, default='log',
                         help='Directory to which results will be logged (default: ./log)')
+    parser.add_argument('-noise_scale', type=float, default=None,
+                        help='Noise scale for the environment')
     parser.add_argument('-multi-domain', dest='multi_domain', action='store_true',
                         help='Enable multi-domain training')
     args = parser.parse_args()
 
-    main(args.env, "MPC", args.calibrate, args.ctrl_arg, args.override, args.logdir, args.multi_domain)
+    main(args.env, "MPC", args.calibrate, args.ctrl_arg, args.override, args.logdir, args.multi_domain, args.noise_scale)

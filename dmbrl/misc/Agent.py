@@ -33,6 +33,8 @@ class Agent:
 
         if self.noise_stddev is not None:
             self.dU = self.env.action_space.shape[0]
+        
+        self.noise_scale = params.noise_scale
 
     def sample(self, horizon, policy, record_fname=None):
         """Samples a rollout from the agent.

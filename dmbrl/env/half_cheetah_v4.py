@@ -149,6 +149,7 @@ class HalfCheetahEnv(MujocoEnv, utils.EzPickle):
         exclude_current_positions_from_observation=True,
         **kwargs
     ):
+        print(f"Reset noise scale: {reset_noise_scale}")
         utils.EzPickle.__init__(
             self,
             forward_reward_weight,

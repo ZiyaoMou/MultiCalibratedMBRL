@@ -14,7 +14,7 @@ class HalfCheetahMultiDomainConfigModule(HalfCheetahConfigModule):
     MODEL_IN, MODEL_OUT = 17 + 6, 17
     GP_NINDUCING_POINTS = 300
 
-    def __init__(self, domain_id=0):
+    def __init__(self, domain_id=0, noise_scale=0.1):
         self.domain_configs = {
             0: {"reset_noise_scale": 0.05},
             1: {"reset_noise_scale": 0.1},
@@ -26,7 +26,8 @@ class HalfCheetahMultiDomainConfigModule(HalfCheetahConfigModule):
         self.ENV = gym.make(
             self.ENV_NAME,
             domain_id=domain_id,
-            domain_configs=self.domain_configs
+            domain_configs=self.domain_configs,
+            reset_noise_scale=self.domain_configs[domain_id]["reset_noise_scale"]
         )
 
         cfg = tf.ConfigProto()
