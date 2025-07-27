@@ -1,0 +1,9 @@
+.idea
+tags
+*.pyc
+log/
+plots/
+images/
+scripts/
+*.png
+*.csv

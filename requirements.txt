@@ -1,0 +1,10 @@
+tensorflow==2.13.0
+tensorflow-probability==0.20.0 
+numpy==1.23.5
+matplotlib==3.7.5
+pandas==2.0.3
+scikit-learn==1.3.2
+mujoco-py==0.5.7
+gpflow==2.2.1
+dotmap==1.3.30
+gym==0.9.4
